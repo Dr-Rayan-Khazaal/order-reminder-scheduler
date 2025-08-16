@@ -40,49 +40,151 @@ module.exports = async ({ req, res, log, error }) => {
 };
 
 /**
- * جدولة التذكيرات المتكررة كل 1 دقائق
+ * جدولة التذكيرات المتكررة - إنشاء سجلات للمعالجة اللاحقة
  */
 async function scheduleRecurringReminders(orderId, designerId, notificationId, log, error) {
-    const maxReminders = 6; // حد أقصى 6 تذكيرات (ساعة واحدة)
-    let reminderCount = 0;
-
-    const reminderInterval = setInterval(async () => {
-        try {
-            // التحقق من حالة القراءة
-            const isRead = await checkNotificationReadStatus(orderId, designerId);
+    try {
+        // إنشاء 6 تذكيرات مجدولة (كل 10 دقائق)
+        const maxReminders = 6;
+        const reminderInterval = 10; // دقائق
+        
+        for (let i = 1; i <= maxReminders; i++) {
+            const reminderTime = new Date(Date.now() + (i * reminderInterval * 60 * 1000));
             
-            if (isRead) {
-                log(`تم قراءة الإشعار، إيقاف التذكيرات للطلب: ${orderId}`);
-                clearInterval(reminderInterval);
-                await deactivateReminderSchedule(orderId, designerId, 'notification_read');
-                return;
-            }
-
-            // التحقق من الحد الأقصى للتذكيرات
-            if (reminderCount >= maxReminders) {
-                log(`تم الوصول للحد الأقصى من التذكيرات للطلب: ${orderId}`);
-                clearInterval(reminderInterval);
-                await deactivateReminderSchedule(orderId, designerId, 'max_reminders_reached');
-                return;
-            }
-
-            // إرسال التذكير
-            await sendReminderNotification(orderId, designerId, notificationId, reminderCount + 1, log);
-            reminderCount++;
-
-            log(`تم إرسال التذكير رقم ${reminderCount} للطلب: ${orderId}`);
-
-        } catch (err) {
-            error(`خطأ في إرسال التذكير: ${err.message}`);
-            clearInterval(reminderInterval);
+            await databases.createDocument(
+                DATABASE_ID,
+                'scheduled_reminders',
+                'unique()',
+                {
+                    order_id: orderId,
+                    designer_id: designerId,
+                    original_notification_id: notificationId,
+                    reminder_number: i,
+                    scheduled_at: reminderTime.toISOString(),
+                    status: 'pending',
+                    created_at: new Date().toISOString()
+                }
+            );
         }
-    }, 1 * 60 * 1000); // 2 دقائق
+        
+        log(`تم جدولة ${maxReminders} تذكيرات للطلب: ${orderId}`);
+        
+        // تشغيل معالج التذكيرات الفوري للتذكير الأول
+        setTimeout(async () => {
+            await processScheduledReminders(log, error);
+        }, reminderInterval * 60 * 1000);
+        
+    } catch (err) {
+        error(`خطأ في جدولة التذكيرات: ${err.message}`);
+        throw err;
+    }
+}
 
-    // إيقاف التذكيرات بعد ساعة واحدة كحد أقصى
-    setTimeout(() => {
-        clearInterval(reminderInterval);
-        deactivateReminderSchedule(orderId, designerId, 'timeout');
-    }, 60 * 60 * 1000); // ساعة واحدة
+/**
+ * معالجة التذكيرات المجدولة
+ */
+async function processScheduledReminders(log, error) {
+    try {
+        const now = new Date().toISOString();
+        
+        // جلب التذكيرات المستحقة
+        const response = await databases.listDocuments(
+            DATABASE_ID,
+            'scheduled_reminders',
+            [
+                `status=pending`,
+                `scheduled_at<=${now}`
+            ]
+        );
+        
+        for (const reminder of response.documents) {
+            try {
+                // التحقق من حالة القراءة
+                const isRead = await checkNotificationReadStatus(
+                    reminder.order_id, 
+                    reminder.designer_id
+                );
+                
+                if (isRead) {
+                    // إلغاء جميع التذكيرات المتبقية لهذا الطلب
+                    await cancelRemainingReminders(reminder.order_id, reminder.designer_id);
+                    continue;
+                }
+                
+                // إرسال التذكير
+                await sendReminderNotification(
+                    reminder.order_id,
+                    reminder.designer_id,
+                    reminder.original_notification_id,
+                    reminder.reminder_number,
+                    log
+                );
+                
+                // تحديث حالة التذكير
+                await databases.updateDocument(
+                    DATABASE_ID,
+                    'scheduled_reminders',
+                    reminder.$id,
+                    {
+                        status: 'sent',
+                        sent_at: new Date().toISOString()
+                    }
+                );
+                
+                log(`تم إرسال التذكير رقم ${reminder.reminder_number} للطلب: ${reminder.order_id}`);
+                
+            } catch (err) {
+                error(`خطأ في معالجة التذكير ${reminder.$id}: ${err.message}`);
+                
+                // تحديث حالة التذكير كفاشل
+                await databases.updateDocument(
+                    DATABASE_ID,
+                    'scheduled_reminders',
+                    reminder.$id,
+                    {
+                        status: 'failed',
+                        failed_at: new Date().toISOString(),
+                        error_message: err.message
+                    }
+                );
+            }
+        }
+        
+    } catch (err) {
+        error(`خطأ في معالجة التذكيرات المجدولة: ${err.message}`);
+    }
+}
+
+/**
+ * إلغاء التذكيرات المتبقية
+ */
+async function cancelRemainingReminders(orderId, designerId) {
+    try {
+        const response = await databases.listDocuments(
+            DATABASE_ID,
+            'scheduled_reminders',
+            [
+                `order_id=${orderId}`,
+                `designer_id=${designerId}`,
+                `status=pending`
+            ]
+        );
+        
+        for (const reminder of response.documents) {
+            await databases.updateDocument(
+                DATABASE_ID,
+                'scheduled_reminders',
+                reminder.$id,
+                {
+                    status: 'cancelled',
+                    cancelled_at: new Date().toISOString(),
+                    cancel_reason: 'notification_read'
+                }
+            );
+        }
+    } catch (err) {
+        console.error('خطأ في إلغاء التذكيرات المتبقية:', err);
+    }
 }
 
 /**
@@ -122,13 +224,13 @@ async function sendReminderNotification(orderId, designerId, originalNotificatio
             target_audience: `designer:${designerId}`,
             is_in_app: true,
             is_push: true,
-            data: {
+            data: JSON.stringify({
                 order_id: orderId,
                 original_notification_id: originalNotificationId,
                 type: 'reminder',
                 reminder_number: reminderNumber,
                 action: 'view_order'
-            },
+            }),
             scheduled_at: new Date().toISOString(),
             status: 'sent',
             created_at: new Date().toISOString()
@@ -153,6 +255,7 @@ async function sendReminderNotification(orderId, designerId, originalNotificatio
                 target_audience: reminderNotification.target_audience,
                 data: reminderNotification.data,
                 status: 'pending',
+                priority: 'high',
                 created_at: new Date().toISOString()
             }
         );
