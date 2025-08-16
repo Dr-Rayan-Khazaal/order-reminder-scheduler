@@ -40,7 +40,7 @@ module.exports = async ({ req, res, log, error }) => {
 };
 
 /**
- * جدولة التذكيرات المتكررة كل 1 دقائق
+ * جدولة التذكيرات المتكررة كل 5 دقائق
  */
 async function scheduleRecurringReminders(orderId, designerId, notificationId, log, error) {
     const maxReminders = 6; // حد أقصى 6 تذكيرات (ساعة واحدة)
@@ -76,7 +76,7 @@ async function scheduleRecurringReminders(orderId, designerId, notificationId, l
             error(`خطأ في إرسال التذكير: ${err.message}`);
             clearInterval(reminderInterval);
         }
-    }, 1 * 60 * 1000); // 1 دقائق
+    }, 5 * 60 * 1000); // 1 دقائق
 
     // إيقاف التذكيرات بعد ساعة واحدة كحد أقصى
     setTimeout(() => {
