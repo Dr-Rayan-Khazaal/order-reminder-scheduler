@@ -1,0 +1,20 @@
+{
+  "name": "order-reminder-scheduler",
+  "version": "1.0.0",
+  "description": "Cloud Function لجدولة تذكيرات الطلبات للمصممات",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "node-appwrite": "^11.1.1"
+  },
+  "keywords": [
+    "appwrite",
+    "notifications",
+    "orders",
+    "reminders"
+  ],
+  "author": "Eng. Rayan Khazaal",
+  "license": "MIT"
+}
