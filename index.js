@@ -1,4 +1,4 @@
-const { Client, Databases, Functions } = require('node-appwrite');
+const { Client, Databases, Functions } = import('node-appwrite');
 
 // إعداد Appwrite
 const client = new Client()
