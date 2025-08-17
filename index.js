@@ -46,7 +46,7 @@ async function scheduleRecurringReminders(orderId, designerId, notificationId, l
     try {
         // إنشاء 6 تذكيرات مجدولة (كل 10 دقائق)
         const maxReminders = 6;
-        const reminderInterval = 10; // دقائق
+        const reminderInterval = 1; // دقائق
         
         for (let i = 1; i <= maxReminders; i++) {
             const reminderTime = new Date(Date.now() + (i * reminderInterval * 60 * 1000));
